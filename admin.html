@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>구름섬 점프맵 관리자</title>
+<style>
+:root{--bg:#eef4fb;--ink:#24324d;--panel:#fff;--line:#d5deea;--accent:#ff8a6b;--accent-ink:#2b1a14;--danger:#d64545}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141b2b;--ink:#eaf1ff;--panel:#1d2740;--line:#33415f}}
+:root[data-theme="dark"]{--bg:#141b2b;--ink:#eaf1ff;--panel:#1d2740;--line:#33415f}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans KR","Malgun Gothic","Apple SD Gothic Neo",sans-serif;line-height:1.5}
+main{max-width:760px;margin:0 auto;padding:24px 16px 60px}
+h1{font-size:24px;margin:0 0 16px}
+h2{font-size:18px;margin:0 0 10px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px}
+input{font:inherit;padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--ink);width:100%;box-sizing:border-box;margin-bottom:10px}
+button{font:inherit;padding:7px 16px;border:0;border-radius:8px;background:var(--accent);color:var(--accent-ink);cursor:pointer}
+button.d{background:var(--danger);color:#fff}
+button.s{padding:3px 10px;font-size:14px}
+button:focus-visible,input:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row small{opacity:.7}
+.top{display:flex;justify-content:space-between;align-items:center}
+#login{max-width:320px;margin:60px auto}
+#err{color:var(--danger);min-height:1.4em;margin:0 0 8px}
+.scroll{overflow-x:auto}
+</style>
+</head>
+<body>
+<main>
+<section id="login">
+  <h1>관리자 로그인</h1>
+  <input id="u" placeholder="아이디" autocomplete="username" value="admin">
+  <input id="p" type="password" placeholder="비밀번호" autocomplete="current-password">
+  <p id="err" role="alert"></p>
+  <button id="in">로그인</button>
+</section>
+
+<div id="app" hidden>
+  <div class="top"><h1>관리자</h1><button id="out" class="s">로그아웃</button></div>
+  <section>
+    <h2>접속 중인 플레이어 <small id="cnt"></small></h2>
+    <div id="players" class="scroll"></div>
+  </section>
+  <section>
+    <div class="top"><h2>랭킹 기록</h2><button id="reset" class="d s">전체 초기화</button></div>
+    <div id="scores" class="scroll"></div>
+  </section>
+</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let token=sessionStorage.getItem('adm')||'',timer=null,armed=false;
+const fmt=t=>{const m=Math.floor(t/60);return m+':'+(t-m*60).toFixed(1).padStart(4,'0')};
+async function api(path,body){
+  const r=await fetch('/api/admin/'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:body?JSON.stringify(body):undefined});
+  const j=await r.json().catch(()=>({}));
+  if(r.status===401&&path!=='login'){logout(false)}
+  if(!r.ok)throw new Error(j.error||'오류');
+  return j;
+}
+function row(left,btnText,fn){
+  const d=document.createElement('div');d.className='row';
+  const l=document.createElement('div');l.append(...left);
+  const b=document.createElement('button');b.className='d s';b.textContent=btnText;b.onclick=fn;
+  d.append(l,b);return d;
+}
+const txt=(t,small)=>{const e=document.createElement(small?'small':'span');e.textContent=t;return e};
+async function refresh(){
+  try{
+    const s=await api('state');
+    $('cnt').textContent='('+s.players.length+'명)';
+    const pl=$('players');pl.textContent='';
+    if(!s.players.length)pl.append(txt('접속 중인 플레이어가 없어요.'));
+    s.players.forEach(p=>pl.append(row([txt(p.n),txt('  높이 '+p.y.toFixed(0)+'m',true)],'강퇴',async()=>{await api('kick',{id:p.id});refresh()})));
+    const sc=$('scores');sc.textContent='';
+    if(!s.scores.length)sc.append(txt('기록이 없어요.'));
+    s.scores.forEach((x,i)=>sc.append(row([txt((i+1)+'. '+x.n+'  '),txt(fmt(x.t)+' / 추락 '+x.f+'번',true)],'삭제',async()=>{await api('delete-score',{k:x.k});refresh()})));
+  }catch(e){}
+}
+function show(on){$('login').hidden=on;$('app').hidden=!on;clearInterval(timer);if(on){refresh();timer=setInterval(refresh,3000)}}
+async function logout(call=true){
+  if(call)try{await api('logout',{})}catch(e){}
+  token='';sessionStorage.removeItem('adm');show(false);
+}
+$('in').onclick=async()=>{
+  $('err').textContent='';
+  try{
+    const j=await api('login',{user:$('u').value,password:$('p').value});
+    token=j.token;sessionStorage.setItem('adm',token);$('p').value='';show(true);
+  }catch(e){$('err').textContent=e.message}
+};
+$('p').addEventListener('keydown',e=>{if(e.key==='Enter')$('in').click()});
+$('out').onclick=()=>logout();
+$('reset').onclick=async()=>{
+  if(!armed){armed=true;$('reset').textContent='정말 지울까요? 한 번 더';setTimeout(()=>{armed=false;$('reset').textContent='전체 초기화'},4000);return}
+  armed=false;$('reset').textContent='전체 초기화';
+  await api('reset-scores',{});refresh();
+};
+if(token)show(true);
+</script>
+</body>
+</html>
